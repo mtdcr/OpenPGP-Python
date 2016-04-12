@@ -611,8 +611,30 @@ class Packet(object):
 
     def header_and_body(self):
         body = self.body() # Get body first, we will need it's length
-        tag = pack('!B', self.tag | 0xC0) # First two bits are 1 for new packet format
-        size = pack('!B', 255) + pack('!L', body and len(body) or 0) # Use 5-octet lengths
+        length = body and len(body) or 0
+        # Prefer smallest possible header. The 2nd most significant bit
+        # of the tag determines the packet format version.
+        if self.tag < 16:
+                # Old packet format
+                if length <= 0xFF:
+                        size = pack('!B', length)
+                        li = 0
+                elif length <= 0xFFFF:
+                        size = pack('!H', length)
+                        li = 1
+                else:
+                        size = pack('!L', length)
+                        li = 2
+                tag = pack('!B', 0x80 | (self.tag << 2) | li)
+        else:
+                # New packet format
+                if length <= 191:
+                        size = pack('!B', length)
+                elif length <= 8383:
+                        size = pack('!H', length - 192)
+                else:
+                        size = pack('!B', 255) + pack('!L', length)
+                tag = pack('!B', 0xC0 | self.tag)
         return {'header': tag + size, 'body': body }
 
     def to_bytes(self):
@@ -920,7 +942,14 @@ class SignaturePacket(Packet):
 
         def header_and_body(self):
             body = self.body() or '' # Get body first, we'll need its length
-            size = pack('!B', 255) + pack('!L', len(body)+1) # Use 5-octet lengths + 1 for tag as first packet body octet
+            length = len(body) + 1
+            # Use 1-, 2- or 5-octet lengths + 1 for type as first packet body octet
+            if length <= 191:
+                size = pack('!B', length)
+            elif length <= (0x3FFF + 192):
+                size = pack('!H', 0xC000 | (length - 192))
+            else:
+                size = pack('!B', 255) + pack('!L', length)
             tag = pack('!B', self.tag)
             return {'header': size + tag, 'body': body}
 
